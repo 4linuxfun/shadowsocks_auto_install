@@ -22,11 +22,11 @@ else
 echo "Network is connetcted,starting install normal tools"
 fi
 
-	cat /etc/centos-release|grep 6.5
-if [ $? -eq 0 ];then
+OS_VER=$(cat /etc/centos-release|grep -o -E "6.[5-7]|7.0"|cut -f 1 -d ".")
+if [ $OS_VER -eq 6 ];then
 	service iptables stop
 	chkconfig iptables off
-elif cat /etc/centos-release|grep 7.0;then 	
+elif [ $OS_VER -eq 7 ];then 	
 	systemctl stop firewalld
 	systemctl disable firewalld
 	yum install iptables-services -y
@@ -37,13 +37,15 @@ elif cat /etc/centos-release|grep 7.0;then
 	chmod +x /etc/rc.d/rc.local
 else
 	echo -e "\033[40;31m ==========================================================\033[0m"
-	echo -e "\033[40;31m This script is only use for centos 6.5 and centos 7\033[0m"
+	echo -e "\033[40;31m This script is only use for centos >6.5\033[0m"
 	echo 				"If you have any question,send email:yinyinxiaozi@gmail.com"
 	echo -e "\033[40;31m ==========================================================\033[0m"
 	exit 1
 fi
 
 DIR_NAME=$(cd "$(dirname "$0")"; pwd)
+
+init_env(){
 #upgrade 服务器
 yum upgrade -y
 #bind-utils nslookup，dig工具包
@@ -58,12 +60,21 @@ ntp cmake bison-devel  ncurses-devel automake  build-essential autoconf libtool 
 curl curl-devel zlib-devel openssl-devel \
 perl perl-devel \
 cpio expat-devel gettext-devel net-tools -y
+}
 
+install_ss(){
 wget https://github.com/madeye/shadowsocks-libev/archive/master.zip
 unzip master.zip
 cd shadowsocks-libev-master
 ./configure -prefix=/usr/local/shadowsocks &&make&&make install
 
+cd ${DIR_NAME}
+rm -rf shadowsocks-libev-master
+rm -rf master.zip
+
+}
+
+init_ss(){
 cat>>/etc/sysctl.conf<<-EOF
 	fs.file-max = 51200
 	net.core.rmem_max = 67108864
@@ -88,10 +99,6 @@ cat>>/etc/sysctl.conf<<-EOF
 	EOF
 sysctl -p
 	
-cd ${DIR_NAME}
-rm -rf shadowsocks-libev-master
-rm -rf master.zip
-
 IP_ADDR=$(curl ifconfig.me)
 SS_SERVER=$(find / -name ss-server)
 
@@ -99,18 +106,21 @@ read -p "Enter server port:" SS_PORT
 read -p "Enter password:" SS_PASSWD
 read -p "Enter method:" SS_METHOD
 touch /root/shadowsocks.json
-cat<<EOF>/root/shadowsocks.json
-{
-"server":"0.0.0.0",
-"server_port":${SS_PORT},
-"password":"${SS_PASSWD}",
-"method": "${SS_METHOD}",
-"timeout":600
+cat<<-EOF>/root/shadowsocks.json
+	{
+	"server":"0.0.0.0",
+	"server_port":${SS_PORT},
+	"password":"${SS_PASSWD}",
+	"method": "${SS_METHOD}",
+	"timeout":600
+	}
+	EOF
+	echo "${SS_SERVER} -u -c /root/shadowsocks.json >/dev/null 2>&1 &">>/etc/rc.d/rc.local
 }
-EOF
 
+start_ss(){
 nohup ${SS_SERVER} -u -c /root/shadowsocks.json >/dev/null 2>&1 &
-ps aux|grep [s]hadowsocks>/dev/null
+ps aux|grep [s]s-server>/dev/null
 if [ $? -ne 0 ];then
 	echo -e "\033[40;31m ==========================================================\033[0m"
 	echo -e "\033[40;31m Shadowsocks start error!"
@@ -127,9 +137,34 @@ else
 	METHOD:${SS_METHOD}
 	+++++++++++++++++++++++++++++
 	EOF
-	echo "${SS_SERVER} -u -c /root/shadowsocks.json >/dev/null 2>&1 &">>/etc/rc.d/rc.local
+
 	echo "=========================================================="
 	echo "Now ,you can use shadowsocks."
 	echo "If you have any question,send email:yinyinxiaozi@gmail.com"
 	echo "=========================================================="
 fi
+}
+
+update_ss(){
+	killall ss-server
+	rm -rf /usr/local/shadowsocks
+	install_ss
+}
+
+case "$1" in
+"-u")
+update_ss
+start_ss
+;;
+"--help")
+cat<<EOF|cat
+update shadowsocks-server:
+ss_auto_install.sh -u
+EOF
+;;
+*)
+init_env
+install_ss
+init_ss
+start_ss
+esac
